@@ -88,6 +88,7 @@ async def test_curse_slug_match(
     result = (await curse_resolver.resolve([defn]))[defn]
     assert type(result) is dict
     assert result['id'] == CURSE_IDS['masque']
+    assert result['folders'] == ['Masque']
 
 
 @pytest.mark.parametrize('version', ['11.2.9', '11.2.9_7373575', 'foo_7373575'])
