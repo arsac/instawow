@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from functools import partial, wraps
-from itertools import chain, compress, filterfalse, repeat
+from itertools import chain, compress, repeat
 from pathlib import Path
 from typing import Literal, Never
 
@@ -10,7 +10,7 @@ from . import ctx
 from ._utils.aio import gather, run_in_thread
 from ._utils.attrs import evolve
 from ._utils.file import trash
-from ._utils.iteration import bucketise, uniq
+from ._utils.iteration import bucketise
 from .definitions import Defn, Strategy
 from .pkg_db import Connection, Row, transact, use_tuple_factory
 from .pkg_db.models import Pkg, PkgLoggedVersion, make_db_converter
@@ -407,26 +407,37 @@ async def _resolve_deps(
     encounter in the wild.
     """
     pkg_candidates, _ = split_results(results.items())
-    dep_defns = uniq(
-        filterfalse(
-            {(d.source, p['id']) for d, p in pkg_candidates.items()}.__contains__,
-            (
-                (d.source, e['id'])
-                for d, p in pkg_candidates.items()
-                if 'deps' in p
-                for e in p['deps']
-            ),
-        )
-    )
-    if not dep_defns:
+    candidate_keys = {(d.source, p['id']) for d, p in pkg_candidates.items()}
+    dep_parent_folders: dict[Defn, set[frozenset[str]]] = {}
+
+    for d, p in pkg_candidates.items():
+        parent_folders = frozenset(p.get('folders', ()))
+        for e in p.get('deps', ()):
+            if (d.source, e['id']) in candidate_keys:
+                continue
+            dep_defn = Defn(d.source, e['id'], e['id'])
+            dep_parent_folders.setdefault(dep_defn, set()).add(parent_folders)
+
+    if not dep_parent_folders:
         return {}
 
     # Map the ID both to the `alias` and the `id` fields of the `Defn` so that
     # it's not lost if we humanise the alias later.
-    deps = await resolve([Defn(s, i, i) for s, i in dep_defns])
-    pretty_deps = {
-        evolve(d, {'alias': r['slug']}) if isinstance(r, dict) else d: r for d, r in deps.items()
-    }
+    deps = await resolve(list(dep_parent_folders))
+    pretty_deps: dict[Defn, AnyResult[PkgCandidate]] = {}
+    for d, r in deps.items():
+        if isinstance(r, dict):
+            dep_folders = frozenset(r.get('folders', ()))
+            parent_folders = dep_parent_folders[d]
+            if (
+                dep_folders
+                and parent_folders
+                and all(dep_folders & folders for folders in parent_folders)
+            ):
+                continue
+            pretty_deps[evolve(d, {'alias': r['slug']})] = r
+        else:
+            pretty_deps[d] = r
     return pretty_deps
 
 

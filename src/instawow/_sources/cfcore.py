@@ -448,6 +448,7 @@ class CfCoreResolver(BaseResolver[_CfCoreMod]):
                 for d in file['dependencies']
                 if d['relationType'] == _CfCoreFileRelationType.RequiredDependency
             ],
+            folders=[m['name'] for m in file['modules']],
         )
 
     async def get_changelog(self, url: str):

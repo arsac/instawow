@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import cast
 
 import aiohttp
 import aiohttp.web
@@ -9,6 +10,7 @@ import pytest
 
 from instawow import ctx, pkg_management
 from instawow.definitions import Defn, Strategy
+from instawow.resolvers import PkgCandidate
 from instawow.results import (
     InternalError,
     PkgAlreadyInstalled,
@@ -27,6 +29,10 @@ from instawow.results import (
 from ._fixtures.http import AddRoutes, Route
 
 pytestmark = pytest.mark.usefixtures('_iw_config_ctx', '_iw_web_client_ctx')
+
+
+def candidate(**values: object) -> PkgCandidate:
+    return cast(PkgCandidate, values)
 
 
 async def test_pinning_supported_pkg():
@@ -89,6 +95,89 @@ async def test_resolve_invalid_source():
     defn = Defn('bar', 'baz')
     results = await pkg_management.resolve([defn])
     assert type(results[defn]) is PkgSourceInvalid
+
+
+async def test_resolve_deps_skips_bundled_folders(monkeypatch: pytest.MonkeyPatch):
+    parent_defn = Defn('curse', '1592')
+    dep_defn = Defn('curse', '1264217', '1264217')
+    parent = candidate(
+        id='1592',
+        folders=['Bagnon', 'BagBrother'],
+        deps=[{'id': '1264217'}],
+    )
+    dependency = candidate(id='1264217', slug='bagbrother', folders=['BagBrother'])
+
+    async def resolve(defns):
+        assert list(defns) == [dep_defn]
+        return {dep_defn: dependency}
+
+    monkeypatch.setattr(pkg_management, 'resolve', resolve)
+
+    assert await pkg_management._resolve_deps({parent_defn: parent}) == {}
+
+
+async def test_resolve_deps_keeps_external_dependency(monkeypatch: pytest.MonkeyPatch):
+    parent_defn = Defn('curse', '1592')
+    dep_defn = Defn('curse', '1264217', '1264217')
+    parent = candidate(
+        id='1592',
+        folders=['Bagnon'],
+        deps=[{'id': '1264217'}],
+    )
+    dependency = candidate(id='1264217', slug='bagbrother', folders=['BagBrother'])
+
+    async def resolve(defns):
+        return {dep_defn: dependency}
+
+    monkeypatch.setattr(pkg_management, 'resolve', resolve)
+
+    result = await pkg_management._resolve_deps({parent_defn: parent})
+    assert list(result) == [Defn('curse', 'bagbrother', '1264217')]
+
+
+async def test_resolve_deps_keeps_dependency_without_folders(monkeypatch: pytest.MonkeyPatch):
+    parent_defn = Defn('curse', '1592')
+    dep_defn = Defn('curse', '1264217', '1264217')
+    parent = candidate(id='1592', deps=[{'id': '1264217'}])
+    dependency = candidate(id='1264217', slug='bagbrother')
+
+    async def resolve(defns):
+        return {dep_defn: dependency}
+
+    monkeypatch.setattr(pkg_management, 'resolve', resolve)
+
+    result = await pkg_management._resolve_deps({parent_defn: parent})
+    assert list(result) == [Defn('curse', 'bagbrother', '1264217')]
+
+
+async def test_resolve_deps_keeps_dependency_for_unbundled_parent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bundled_defn = Defn('curse', '1592')
+    external_defn = Defn('curse', '1593')
+    dep_defn = Defn('curse', '1264217', '1264217')
+    dependency = candidate(id='1264217', slug='bagbrother', folders=['BagBrother'])
+
+    async def resolve(defns):
+        return {dep_defn: dependency}
+
+    monkeypatch.setattr(pkg_management, 'resolve', resolve)
+
+    result = await pkg_management._resolve_deps(
+        {
+            bundled_defn: candidate(
+                id='1592',
+                folders=['Bagnon', 'BagBrother'],
+                deps=[{'id': '1264217'}],
+            ),
+            external_defn: candidate(
+                id='1593',
+                folders=['Other'],
+                deps=[{'id': '1264217'}],
+            ),
+        }
+    )
+    assert list(result) == [Defn('curse', 'bagbrother', '1264217')]
 
 
 @pytest.mark.skipif(

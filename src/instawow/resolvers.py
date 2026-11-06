@@ -28,6 +28,7 @@ class PkgCandidate(TypedDict):
     version: str
     changelog_url: str
     deps: NotRequired[list[_PkgCandidate_Dep]]
+    folders: NotRequired[list[str]]
 
 
 class _PkgCandidate_Dep(TypedDict):
