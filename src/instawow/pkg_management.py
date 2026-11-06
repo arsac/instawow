@@ -429,6 +429,8 @@ async def _resolve_deps(
         if isinstance(r, dict):
             dep_folders = frozenset(r.get('folders', ()))
             parent_folders = dep_parent_folders[d]
+            # A CurseForge archive can bundle a required dependency in its own
+            # module folders; installing it separately would collide.
             if (
                 dep_folders
                 and parent_folders
